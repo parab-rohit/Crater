@@ -1,8 +1,10 @@
 use std::fs::{self, File, OpenOptions};
+use std::env;
 use nix::mount::{mount, umount2, MntFlags, MsFlags};
 use nix::sched::{unshare, CloneFlags};
 use nix::unistd::{chdir, pivot_root, fork, ForkResult, sethostname};
 use nix::sys::wait::waitpid;
+use nix::sys::stat::{mknod, Mode, SFlag, makedev};
 use std::process::Command;
 use std::os::unix::process::CommandExt;
 use std::os::unix::io::AsRawFd;
@@ -13,6 +15,12 @@ const LOOP_SET_FD: libc::c_ulong = 0x4C00;
 const LOOP_CTL_GET_FREE: libc::c_ulong = 0x4C82;
 
 fn main() {
+    let args: Vec<String> = env::args().collect();
+    let (cmd, cmd_args) = if args.len() > 1 {
+        (args[1].clone(), args[2..].to_vec())
+    } else {
+        ("/bin/sh".to_string(),vec![])
+    };
     println!("Crater Runtime Starting...");
     let flags = CloneFlags::CLONE_NEWUTS | CloneFlags::CLONE_NEWPID | CloneFlags::CLONE_NEWNS;
     unshare(flags).expect("Unshare Failed!");
@@ -42,6 +50,15 @@ fn main() {
             let device_path = format!("/dev/loop{}", dev_num);
             println!("Child: Attaching {} to {}", image_path, device_path);
 
+            if !Path::new(&device_path).exists(){
+                let dev = makedev(7, dev_num as u64);
+                mknod(
+                    device_path.as_str(),
+                    SFlag::S_IFBLK,
+                    Mode::S_IRWXU,
+                    dev,
+                ).expect("Failed to create loop device node");
+            }
             let backing_file = OpenOptions::new().read(true).write(true).open(image_path)
                 .expect("Failed to open backing image file");
             let loop_dev = OpenOptions::new().read(true).write(true).open(&device_path)
@@ -81,8 +98,9 @@ fn main() {
                 None::<&str>
             ).expect("Failed to mount /proc");
 
-            println!("Child: Environment isolated. Launching shell...");
-            let mut child_cmd = Command::new("/bin/sh");
+            println!("Child: Environment isolated. Launching command: {}...", cmd);
+            let mut child_cmd = Command::new(&cmd);
+            child_cmd.args(&cmd_args);
             let _ = child_cmd.exec();
         }
         Err(e) => panic!("Fork failed: {}", e),

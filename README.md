@@ -4,7 +4,7 @@ A tiny, educational container runtime written in Rust. Crater demonstrates how t
 - Unshare UTS, PID and mount namespaces
 - Create and mount a writable ext4 root filesystem from a disk image via a loop device
 - Pivot into the new root (pivot_root) and mount /proc
-- Launch a shell inside the isolated environment
+- Launch a specified command inside the isolated environment (defaults to /bin/sh)
 
 The repository includes a Dockerfile and a deploy script that prepare an Alpine-based root filesystem inside an ext4 disk image, then run the Rust runtime to enter it.
 
@@ -19,7 +19,7 @@ Note: Crater is for learning and experimentation only. It is not a secure contai
    - Finds a free /dev/loopN via ioctl(LOOP_CTL_GET_FREE), and attaches the disk image with ioctl(LOOP_SET_FD)
    - Mounts the loop device to /app/crater_rootfs as ext4
    - Bind-mounts rootfs, performs pivot_root into it, and cleans up the old root
-   - Mounts a safe /proc and execs /bin/sh inside the new root
+   - Mounts a safe /proc and execs the provided command (defaults to /bin/sh) inside the new root
 
 Key files:
 - src/main.rs: namespace + loop device + mount + pivot_root + /proc + shell
@@ -64,7 +64,7 @@ Security notes:
    Child: Setting up isolated environment...
    Child: Finding free loop device...
    Child: Attaching /app/container_disk.img to /dev/loopX
-   Child: Environment isolated. Launching shell...
+   Child: Environment isolated. Launching command: /bin/sh...
 
    Then you will drop into an Alpine shell inside the isolated root. Try:
    uname -n
@@ -137,15 +137,37 @@ Cleanup (optional):
 
 ## Limitations and notes
 - This runtime is intentionally minimal: no cgroups, no networking setup, no user namespace mapping, no seccomp.
-- The child process currently execs /bin/sh; change src/main.rs if you want to run a specific command.
+- The child process execs the provided command (defaults to /bin/sh). You can pass a custom command and arguments; see the section below. Changing src/main.rs is not required for simple cases.
 - The disk image size is fixed at 500 MB in deploy.sh; adjust as needed.
 - Loop device cleanup is basic; for production you’d use a more robust loop-control strategy.
 
 ## Development
-- Code location: src/main.rs (about 90 lines)
+- Code location: src/main.rs (about 108 lines)
 - Build: cargo build
 - Run (Docker): docker build -t crater . && docker run --rm -it --privileged crater
 - Run (host): see steps above
 
 ## License
 This project is provided as-is for educational purposes. See LICENSE if present or treat as all-rights-reserved if absent.
+
+
+## Running a custom command
+
+Crater can exec any command you provide. If no command is given, it defaults to /bin/sh.
+
+- On a Linux host (recommended for trying custom commands):
+  - Run a simple command:
+    sudo ./target/debug/Crater /bin/echo "hello from crater"
+  - Run a shell with inline commands:
+    sudo ./target/debug/Crater /bin/sh -lc "uname -a && id && cat /etc/os-release"
+
+- Inside the provided Docker image (note about deploy.sh):
+  - The included deploy.sh prepares the disk image and then runs the runtime without forwarding arguments, so by default you always land in /bin/sh.
+  - If you want to pass a custom command when using docker run, the simplest approach is to tweak deploy.sh locally to forward arguments:
+    - Change the last line of deploy.sh from:
+        ./target/debug/Crater
+      to:
+        exec ./target/debug/Crater "$@"
+    - Then you can run:
+        docker run --rm -it --privileged crater:latest /bin/echo "hello from crater in docker"
+  - Alternatively, you can override the entrypoint and reproduce the deploy steps manually before launching your command; this is more cumbersome but avoids editing the script.
