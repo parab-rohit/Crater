@@ -1,5 +1,6 @@
 use std::fs::{self, File, OpenOptions};
 use std::env;
+use std::io::Write;
 use nix::mount::{mount, umount2, MntFlags, MsFlags};
 use nix::sched::{unshare, CloneFlags};
 use nix::unistd::{chdir, pivot_root, fork, ForkResult, sethostname};
@@ -28,9 +29,28 @@ fn main() {
 
     match unsafe { fork() } {
         Ok(ForkResult::Parent { child }) => {
+            println!("Parent: Setting up cgroups for child {}", child);
+
+            let cgroup_dir = format!("/sys/fs/cgroup/crater-{}", child);
+            let cgroup_path = Path::new(&cgroup_dir);
+
+            if fs::create_dir(cgroup_path).is_ok() {
+                let _ = fs::write(cgroup_path.join("pids.max"),"20");
+                let _ = fs::write(cgroup_path.join("cgroup.procs"),child.to_string());
+                let _ = fs::write(cgroup_path.join("memory.max"),"104857600");
+                let _ = fs::write(cgroup_path.join("cpu.max"),"50000 100000");
+                println!("Parent: Cgroup limits (PID=20, Mem=100MB, CPU=0.5) applied.");
+            } else {
+                eprintln!("Parent: Warning - Failed to set cgroups. Resource limits not applied");
+            }
+
             println!("Parent: Waiting for container process {} to finish...", child);
             waitpid(child, None).expect("Waitpid failed");
+            if cgroup_path.exists() {
+                let _ = fs::remove_dir(cgroup_path);
+            }
             println!("Parent: Container finished. Exiting.");
+
         }
         Ok(ForkResult::Child) => {
             println!("Child: Setting up isolated environment...");
@@ -97,6 +117,22 @@ fn main() {
                 MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC | MsFlags::MS_NODEV,
                 None::<&str>
             ).expect("Failed to mount /proc");
+            let fake_meminfo_path = "/fake_meminfo";
+            let mut f = File::create(fake_meminfo_path).expect("Failed to create fake meminfo");
+
+            let meminfo_content = "MemTotal:         102400 kB\n\
+                                   MemFree:          102400 kB\n\
+                                   MemAvailable:     102400 kB\n\
+                                   SwapTotal:             0 kB\n\
+                                   SwapFree:              0 kB\n";
+            f.write_all(meminfo_content.as_bytes()).expect("Failed to write fake meminfo");
+            mount(
+                Some(fake_meminfo_path),
+                "/proc/meminfo",
+                None::<&str>,
+                MsFlags::MS_BIND,
+                None::<&str>
+            ).expect("Failed to bind mount /proc/meminfo");
 
             println!("Child: Environment isolated. Launching command: {}...", cmd);
             let mut child_cmd = Command::new(&cmd);
