@@ -23,7 +23,7 @@ fn main() {
         ("/bin/sh".to_string(),vec![])
     };
     println!("Crater Runtime Starting...");
-    let flags = CloneFlags::CLONE_NEWUTS | CloneFlags::CLONE_NEWPID | CloneFlags::CLONE_NEWNS;
+    let flags = CloneFlags::CLONE_NEWUTS | CloneFlags::CLONE_NEWPID | CloneFlags::CLONE_NEWNS | CloneFlags::CLONE_NEWNET;
     unshare(flags).expect("Unshare Failed!");
     println!("Successfully isolated namespaces!");
 
@@ -134,6 +134,12 @@ fn main() {
                 None::<&str>
             ).expect("Failed to bind mount /proc/meminfo");
 
+            if let Err(e) = Command::new("ip")
+                .args(&["link", "set", "up","dev", "lo"])
+                .output()
+            {
+                eprintln!("Child: Failed to set up loopback device: {}", e);
+            }
             println!("Child: Environment isolated. Launching command: {}...", cmd);
             let mut child_cmd = Command::new(&cmd);
             child_cmd.args(&cmd_args);
