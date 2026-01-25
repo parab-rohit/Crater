@@ -37,6 +37,8 @@ fn main() {
     let cmd = args[0].clone();
     let cmd_args = args[1..].to_vec();
 
+    let env_vars = process.env().as_ref().expect("Failed to get envs from process");
+
     let root_path_str = spec.root().as_ref()
         .map(|r| r.path().to_str().unwrap())
         .expect("Root path not defined in config.json");
@@ -167,6 +169,16 @@ fn main() {
             println!("Child: Environment isolated. Launching command: {}...", cmd);
             let mut child_cmd = Command::new(&cmd);
             child_cmd.args(&cmd_args);
+
+            child_cmd.env_clear();
+            for env_var in env_vars {
+                if let Some((key, value)) = env_var.split_once('=') {
+                    child_cmd.env(key, value);
+                } else {
+                    panic!("Invalid environment variable: {}", env_var);
+                }
+            }
+
             let _ = child_cmd.exec();
         }
         Err(e) => panic!("Fork failed: {}", e),
