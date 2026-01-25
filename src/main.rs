@@ -37,6 +37,12 @@ fn main() {
     let cmd = args[0].clone();
     let cmd_args = args[1..].to_vec();
 
+    let root_path_str = spec.root().as_ref()
+        .map(|r| r.path().to_str().unwrap())
+        .expect("Root path not defined in config.json");
+
+    let rootfs = Path::new(root_path_str);
+
     println!("Configuration loaded. Command: {} {:?}",cmd,cmd_args);
 
     let flags = CloneFlags::CLONE_NEWUTS | CloneFlags::CLONE_NEWPID | CloneFlags::CLONE_NEWNS | CloneFlags::CLONE_NEWNET;
@@ -74,7 +80,7 @@ fn main() {
             mount(None::<&str>, "/", None::<&str>, MsFlags::MS_REC | MsFlags::MS_PRIVATE, None::<&str>)
                 .expect("Failed to make mounts private");
 
-            let rootfs = Path::new("/app/crater_rootfs");
+            // let rootfs = Path::new("/app/crater_rootfs");
             let image_path = "/app/container_disk.img";
 
             // 3. ATTACH LOOP DEVICE (Manual Implementation)
