@@ -10,19 +10,35 @@ use std::process::Command;
 use std::os::unix::process::CommandExt;
 use std::os::unix::io::AsRawFd;
 use std::path::Path;
+use oci_spec::runtime::Spec;
 
 // Define Linux Loop Device IOCTL constants manually to avoid bindgen issues
 const LOOP_SET_FD: libc::c_ulong = 0x4C00;
 const LOOP_CTL_GET_FREE: libc::c_ulong = 0x4C82;
 
 fn main() {
-    let args: Vec<String> = env::args().collect();
-    let (cmd, cmd_args) = if args.len() > 1 {
-        (args[1].clone(), args[2..].to_vec())
-    } else {
-        ("/bin/sh".to_string(),vec![])
-    };
     println!("Crater Runtime Starting...");
+
+    let spec = match Spec::load("config.json"){
+        Ok(spec) => spec,
+        Err(e) => {
+            eprintln!("Failed to load config.json: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let process = spec.process().as_ref().expect("Failed to get process from config.json");
+    let args = process.args().as_ref().expect("Failed to get args from process");
+
+    if args.is_empty() {
+        panic!("config.json process.args must not be empty");
+    }
+
+    let cmd = args[0].clone();
+    let cmd_args = args[1..].to_vec();
+
+    println!("Configuration loaded. Command: {} {:?}",cmd,cmd_args);
+
     let flags = CloneFlags::CLONE_NEWUTS | CloneFlags::CLONE_NEWPID | CloneFlags::CLONE_NEWNS | CloneFlags::CLONE_NEWNET;
     unshare(flags).expect("Unshare Failed!");
     println!("Successfully isolated namespaces!");
@@ -141,7 +157,7 @@ fn main() {
             {
                 eprintln!("Child: Warning - Failed to set up loopback device: {}", e);
             }
-            
+
             println!("Child: Environment isolated. Launching command: {}...", cmd);
             let mut child_cmd = Command::new(&cmd);
             child_cmd.args(&cmd_args);

@@ -20,4 +20,27 @@ cp -a /app/crater_rootfs/. /mnt/tmp_disk/
 umount /mnt/tmp_disk
 
 # 6. Run the runtime
+cat <<EOF > config.json
+{
+  "ociVersion": "1.0.0",
+  "process": {
+    "terminal": true,
+    "user": {
+      "uid": 0,
+      "gid": 0
+    },
+    "args": [
+      "/bin/sh"
+    ],
+    "env": [
+      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      "TERM=xterm"
+    ],
+    "cwd": "/"
+  },
+  "root": {
+    "path": "/app/crater_rootfs"
+  }
+}
+EOF
 ./target/debug/Crater
