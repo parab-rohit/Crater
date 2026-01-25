@@ -1,9 +1,11 @@
 # Crater
 
 A tiny, educational container runtime written in Rust. Crater demonstrates how to:
-- Unshare UTS, PID and mount namespaces
+- Unshare UTS, PID, mount, and network namespaces
 - Create and mount a writable ext4 root filesystem from a disk image via a loop device
-- Pivot into the new root (pivot_root) and mount /proc
+- Pivot into the new root (pivot_root), mount /proc and /sys
+- Apply basic cgroup v2 limits (pids, memory, cpu) to the containerized process
+- Bring up the loopback interface inside the network namespace
 - Launch a specified command inside the isolated environment (defaults to /bin/sh)
 
 The repository includes a Dockerfile and a deploy script that prepare an Alpine-based root filesystem inside an ext4 disk image, then run the Rust runtime to enter it.
@@ -14,16 +16,18 @@ Note: Crater is for learning and experimentation only. It is not a secure contai
 1) The Docker image downloads an Alpine minirootfs and places it under /app/crater_rootfs.
 2) deploy.sh builds the Rust binary and creates a 500 MB ext4 disk image at /app/container_disk.img, then copies the Alpine files into it.
 3) The Rust program:
-   - Unshares UTS, PID, and mount namespaces
-   - Forks: the parent waits; the child sets the hostname, makes mounts private
+   - Unshares UTS, PID, mount, and network namespaces
+   - Forks: the parent configures cgroup v2 limits for the child; the child sets the hostname and makes mounts private
    - Finds a free /dev/loopN via ioctl(LOOP_CTL_GET_FREE), and attaches the disk image with ioctl(LOOP_SET_FD)
    - Mounts the loop device to /app/crater_rootfs as ext4
    - Bind-mounts rootfs, performs pivot_root into it, and cleans up the old root
-   - Mounts a safe /proc and execs the provided command (defaults to /bin/sh) inside the new root
+   - Mounts safe /proc and /sys
+   - Brings up the loopback interface (lo) inside the network namespace
+   - Execs the provided command (defaults to /bin/sh) inside the new root
 
 Key files:
-- src/main.rs: namespace + loop device + mount + pivot_root + /proc + shell
-- Dockerfile: prepares toolchain and Alpine minirootfs in the image layers
+- src/main.rs: namespaces (UTS/PID/mount/net) + loop device attach + mount + pivot_root + /proc and /sys mounts + basic cgroups v2 + loopback setup + shell exec
+- Dockerfile: prepares toolchain and Alpine minirootfs in the image layers, ensures /sbin/ip is available via busybox
 - deploy.sh: builds, creates the ext4 image, copies the Alpine rootfs into it, then runs the binary
 - Cargo.toml: uses nix and libc crates (Rust 2024 edition)
 
@@ -31,12 +35,14 @@ Key files:
 
 Host/kernel capabilities (whether inside Docker or on a bare-metal host):
 - Linux kernel with:
-  - CONFIG_USER_NS, CONFIG_PID_NS, CONFIG_UTS_NS, CONFIG_NAMESPACES
+  - CONFIG_USER_NS, CONFIG_PID_NS, CONFIG_UTS_NS, CONFIG_NET_NS, CONFIG_NAMESPACES
   - CONFIG_BLK_DEV_LOOP (loop device support); module "loop" must be available/loaded
   - ext4 filesystem support
-  - procfs support
-- Root privileges (or sufficient capabilities: SYS_ADMIN, SYS_RESOURCE, SYS_CHROOT, MKNOD, etc.). In practice: run as root or in a fully privileged container.
+  - procfs and sysfs support
+  - cgroup v2 mounted at /sys/fs/cgroup (most modern distros default to this)
+- Root privileges (or sufficient capabilities: SYS_ADMIN, SYS_RESOURCE, SYS_CHROOT, MKNOD, CAP_SETUID/CAP_SETGID for some setups). In practice: run as root or in a fully privileged container.
 - Tools used by the helper script: dd, mkfs.ext4, mount, cp, umount, curl, tar.
+- For networking setup inside the container: busybox ip or iproute2 available in the rootfs (Dockerfile symlinks /sbin/ip to busybox)
 - Rust toolchain if building outside Docker.
 
 Security notes:
@@ -60,7 +66,9 @@ Security notes:
 3) You should see logs similar to:
    Crater Runtime Starting...
    Successfully isolated namespaces!
-   Parent: Waiting for container process ... to finish...
+   Parent: Setting up cgroups for child <pid>
+   Parent: Cgroup limits (PID=20, Mem=100MB, CPU=0.5) applied.
+   Parent: Waiting for container process <pid> to finish...
    Child: Setting up isolated environment...
    Child: Finding free loop device...
    Child: Attaching /app/container_disk.img to /dev/loopX
@@ -136,13 +144,14 @@ Cleanup (optional):
   - Ensure the Alpine rootfs is fully copied; cp -a preserves permissions and symlinks
 
 ## Limitations and notes
-- This runtime is intentionally minimal: no cgroups, no networking setup, no user namespace mapping, no seccomp.
+- This runtime is intentionally minimal: basic cgroup v2 limits only (pids/memory/cpu); no user namespace mapping, no seccomp, no device isolation.
+- Networking: only a separate network namespace with loopback brought up; no veth or external connectivity setup.
 - The child process execs the provided command (defaults to /bin/sh). You can pass a custom command and arguments; see the section below. Changing src/main.rs is not required for simple cases.
 - The disk image size is fixed at 500 MB in deploy.sh; adjust as needed.
 - Loop device cleanup is basic; for production you’d use a more robust loop-control strategy.
 
 ## Development
-- Code location: src/main.rs (about 108 lines)
+- Code location: src/main.rs (about 150+ lines)
 - Build: cargo build
 - Run (Docker): docker build -t crater . && docker run --rm -it --privileged crater
 - Run (host): see steps above
