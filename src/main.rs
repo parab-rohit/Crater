@@ -38,6 +38,7 @@ fn main() {
     let cmd_args = args[1..].to_vec();
 
     let env_vars = process.env().as_ref().expect("Failed to get envs from process");
+    let hostname = spec.hostname().as_ref().expect("Failed to get hostname from config.json");
 
     let root_path_str = spec.root().as_ref()
         .map(|r| r.path().to_str().unwrap())
@@ -78,7 +79,7 @@ fn main() {
         }
         Ok(ForkResult::Child) => {
             println!("Child: Setting up isolated environment...");
-            sethostname("crater-container").expect("Failed to set hostname");
+            sethostname(hostname).expect("Failed to set hostname");
             mount(None::<&str>, "/", None::<&str>, MsFlags::MS_REC | MsFlags::MS_PRIVATE, None::<&str>)
                 .expect("Failed to make mounts private");
 
