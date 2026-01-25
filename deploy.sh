@@ -37,7 +37,7 @@ cat <<EOF > config.json
       "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
       "TERM=xterm"
     ],
-    "cwd": "/"
+    "cwd": "/tmp"
   },
   "root": {
     "path": "/app/crater_rootfs"

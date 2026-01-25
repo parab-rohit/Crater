@@ -167,10 +167,13 @@ fn main() {
                 eprintln!("Child: Warning - Failed to set up loopback device: {}", e);
             }
 
+            let cwd = process.cwd();
+
+
             println!("Child: Environment isolated. Launching command: {}...", cmd);
             let mut child_cmd = Command::new(&cmd);
             child_cmd.args(&cmd_args);
-
+            child_cmd.current_dir(cwd);
             child_cmd.env_clear();
             for env_var in env_vars {
                 if let Some((key, value)) = env_var.split_once('=') {
