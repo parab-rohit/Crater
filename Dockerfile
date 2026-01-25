@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y \
     clang \
     libclang-dev \
     llvm-dev \
+    iproute2 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY . /app
@@ -23,6 +24,8 @@ RUN mkdir -p /app/crater_rootfs
 RUN curl -o /tmp/alpine.tar.gz https://dl-cdn.alpinelinux.org/alpine/v3.18/releases/x86_64/alpine-minirootfs-3.18.4-x86_64.tar.gz
 RUN tar -xzvf /tmp/alpine.tar.gz -C /app/crater_rootfs
 RUN rm /tmp/alpine.tar.gz
+
+RUN ln -sf /bin/busybox /app/crater_rootfs/sbin/ip
 
 # Ensure deploy script is executable
 RUN chmod +x deploy.sh

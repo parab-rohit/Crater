@@ -110,6 +110,11 @@ fn main() {
             umount2("/old_root", MntFlags::MNT_DETACH).ok();
             fs::remove_dir("/old_root").ok();
 
+            let proc_path = Path::new("/proc");
+            if !proc_path.exists() {
+                let _ = fs::create_dir(proc_path);
+            }
+
             mount(
                 Some("proc"),
                 "/proc",
@@ -117,29 +122,26 @@ fn main() {
                 MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC | MsFlags::MS_NODEV,
                 None::<&str>
             ).expect("Failed to mount /proc");
-            let fake_meminfo_path = "/fake_meminfo";
-            let mut f = File::create(fake_meminfo_path).expect("Failed to create fake meminfo");
 
-            let meminfo_content = "MemTotal:         102400 kB\n\
-                                   MemFree:          102400 kB\n\
-                                   MemAvailable:     102400 kB\n\
-                                   SwapTotal:             0 kB\n\
-                                   SwapFree:              0 kB\n";
-            f.write_all(meminfo_content.as_bytes()).expect("Failed to write fake meminfo");
+            let sys_path = Path::new("/sys");
+            if !sys_path.exists() {
+                let _ = fs::create_dir(sys_path);
+            }
             mount(
-                Some(fake_meminfo_path),
-                "/proc/meminfo",
-                None::<&str>,
-                MsFlags::MS_BIND,
+                Some("sysfs"),
+                "/sys",
+                Some("sysfs"),
+                MsFlags::MS_RDONLY | MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC | MsFlags::MS_NODEV,
                 None::<&str>
-            ).expect("Failed to bind mount /proc/meminfo");
+            ).expect("Failed to mount /sys");
 
-            if let Err(e) = Command::new("ip")
-                .args(&["link", "set", "up","dev", "lo"])
+            if let Err(e) = Command::new("/bin/sh")
+                .args(&["-c", "ip link set up dev lo || ifconfig lo up"])
                 .output()
             {
-                eprintln!("Child: Failed to set up loopback device: {}", e);
+                eprintln!("Child: Warning - Failed to set up loopback device: {}", e);
             }
+            
             println!("Child: Environment isolated. Launching command: {}...", cmd);
             let mut child_cmd = Command::new(&cmd);
             child_cmd.args(&cmd_args);
