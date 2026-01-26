@@ -174,6 +174,13 @@ fn main() {
             let mut child_cmd = Command::new(&cmd);
             child_cmd.args(&cmd_args);
             child_cmd.current_dir(cwd);
+            // if let Some(user) = process.user().as_ref() {
+            //     println!("Container User: uid={} gid={}", user.uid, user.gid);
+            //     child_cmd.uid(user.uid);
+            //     child_cmd.gid(user.gid);
+            // }
+
+
             child_cmd.env_clear();
             for env_var in env_vars {
                 if let Some((key, value)) = env_var.split_once('=') {

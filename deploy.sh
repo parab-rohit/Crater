@@ -23,7 +23,7 @@ umount /mnt/tmp_disk
 cat <<EOF > config.json
 {
   "ociVersion": "1.0.0",
-  "hostname":"crater-oci-demo"
+  "hostname":"crater-oci-demo",
   "process": {
     "terminal": true,
     "user": {
