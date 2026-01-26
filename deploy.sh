@@ -44,4 +44,4 @@ cat <<EOF > config.json
   }
 }
 EOF
-./target/debug/Crater
+./target/debug/Crater run demo-container

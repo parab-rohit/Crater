@@ -17,8 +17,19 @@ const LOOP_SET_FD: libc::c_ulong = 0x4C00;
 const LOOP_CTL_GET_FREE: libc::c_ulong = 0x4C82;
 
 fn main() {
-    println!("Crater Runtime Starting...");
+    let args: Vec<String> = env::args().collect();
 
+    if args.len() < 3 || args[1] != "run" {
+        eprintln!("Usage: {} run <container_id>", args.get(0).unwrap_or(&String::from("crater")));
+        std::process::exit(1);
+    }
+
+    let container_id = &args[2];
+    run_container(container_id);
+}
+
+fn run_container(container_id: &str) {
+    println!("Crater Runtime Starting. Container ID: {}", container_id);
     let spec = match Spec::load("config.json"){
         Ok(spec) => spec,
         Err(e) => {
@@ -28,6 +39,7 @@ fn main() {
     };
 
     let process = spec.process().as_ref().expect("Failed to get process from config.json");
+
     let args = process.args().as_ref().expect("Failed to get args from process");
 
     if args.is_empty() {
