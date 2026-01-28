@@ -1,9 +1,8 @@
 use std::fs::{self, File, OpenOptions};
 use std::env;
-use std::io::Write;
 use nix::mount::{mount, umount2, MntFlags, MsFlags};
 use nix::sched::{unshare, CloneFlags};
-use nix::unistd::{chdir, pivot_root, fork, ForkResult, sethostname};
+use nix::unistd::{chdir, pivot_root, fork, ForkResult, sethostname, Pid};
 use nix::sys::wait::waitpid;
 use nix::sys::stat::{mknod, Mode, SFlag, makedev};
 use std::process::Command;
@@ -16,17 +15,66 @@ use oci_spec::runtime::Spec;
 const LOOP_SET_FD: libc::c_ulong = 0x4C00;
 const LOOP_CTL_GET_FREE: libc::c_ulong = 0x4C82;
 
+fn parse_mount_opts(options: &Option<Vec<String>>) -> (MsFlags, String) {
+    let mut flags= MsFlags::empty();
+    let mut data = Vec::new();
+    if let Some(opts) = options {
+        for opt in opts {
+            match opt.as_str() {
+                "defaults" => {},
+                "ro" => flags |= MsFlags::MS_RDONLY,
+                "rw" => {},
+                "nosuid" => flags |= MsFlags::MS_NOSUID,
+                "noexec" => flags |= MsFlags::MS_NOEXEC,
+                "nodev" => flags |= MsFlags::MS_NODEV,
+                "bind" => flags |= MsFlags::MS_BIND,
+                "rbind" => flags |= MsFlags::MS_BIND | MsFlags::MS_REC,
+                s => data.push(s.to_string()),
+            }
+        }
+    }
+    (flags, data.join(","))
+}
 fn main() {
     let args: Vec<String> = env::args().collect();
+    let command = args.get(1).map(|s| s.as_str());
 
-    if args.len() < 3 || args[1] != "run" {
-        eprintln!("Usage: {} run <container_id>", args.get(0).unwrap_or(&String::from("crater")));
-        std::process::exit(1);
+    match command {
+        Some("run") => {
+            if args.len() < 3 {
+                eprintln!("Usage: {} run <container_id>", args.get(0).unwrap_or(&String::from("crater")));
+                std::process::exit(1);
+            }
+            let container_id = &args[2];
+            run_container(container_id);
+        }
+        _ => {
+            eprintln!("Usage: {} run <container_id>", args.get(0).unwrap_or(&String::from("crater")));
+            std::process::exit(1);
+        }
     }
-
-    let container_id = &args[2];
-    run_container(container_id);
 }
+
+fn save_state(container_id: &str, pid: Pid) -> std::io::Result<()> {
+    let state_dir = Path::new("/var/run/crater").join(container_id);
+    fs::create_dir_all(&state_dir)?;
+    fs::write(state_dir.join("pid"),pid.as_raw().to_string())
+}
+
+fn delete_state(container_id: &str) {
+    let state_dir = Path::new("/var/run/crater").join(container_id);
+    let _ = fs::remove_dir_all(state_dir);
+}
+
+// fn run_container(container_id: &str) {
+// if args.len() < 3 || args[1] != "run" {
+//         eprintln!("Usage: {} run <container_id>", args.get(0).unwrap_or(&String::from("crater")));
+//         std::process::exit(1);
+//     }
+//
+//     let container_id = &args[2];
+//     run_container(container_id);
+// }
 
 fn run_container(container_id: &str) {
     println!("Crater Runtime Starting. Container ID: {}", container_id);
@@ -68,6 +116,10 @@ fn run_container(container_id: &str) {
         Ok(ForkResult::Parent { child }) => {
             println!("Parent: Setting up cgroups for child {}", child);
 
+            if let Err(e) = save_state(container_id, child) {
+                eprintln!("Failed to save state: {}", e);
+            }
+
             let cgroup_dir = format!("/sys/fs/cgroup/crater-{}", child);
             let cgroup_path = Path::new(&cgroup_dir);
 
@@ -86,7 +138,13 @@ fn run_container(container_id: &str) {
             if cgroup_path.exists() {
                 let _ = fs::remove_dir(cgroup_path);
             }
+            delete_state(container_id);
             println!("Parent: Container finished. Exiting.");
+
+            match waitpid(child, None) {
+                Ok(status) => println!("Child exited with status : {:?}", status),
+                Err(e) => println!("Error waiting for child: {}", e)
+            }
 
         }
         Ok(ForkResult::Child) => {
@@ -133,6 +191,30 @@ fn run_container(container_id: &str) {
                 None::<&str>,
             ).expect("Failed to mount loop device");
 
+            if let Some(mounts) = spec.mounts() {
+                for m in mounts {
+                    let dest_str = m.destination().to_str().expect("Mount destination must be valid UTF-8");
+                    let dest = dest_str.trim_start_matches('/');
+                    let target = rootfs.join(dest);
+
+                    if !target.exists() {
+                        let _ = fs::create_dir_all(&target);
+                    }
+
+                    let (flags, data) = parse_mount_opts(&m.options());
+                    let fstype = m.typ().as_deref();
+
+                    mount(
+                        m.source().as_deref(),
+                        &target,
+                        fstype,
+                        flags,
+                        Some(data.as_str())
+                    ).unwrap_or_else(|e| eprintln!("Warning: Failed to mount {:?}: {}", target, e));
+                }
+            }
+
+
             // 5. Pivot Root
             mount(Some(rootfs), rootfs, None::<&str>, MsFlags::MS_BIND | MsFlags::MS_REC, None::<&str>)
                 .expect("Failed to bind mount rootfs");
@@ -147,30 +229,30 @@ fn run_container(container_id: &str) {
             umount2("/old_root", MntFlags::MNT_DETACH).ok();
             fs::remove_dir("/old_root").ok();
 
-            let proc_path = Path::new("/proc");
-            if !proc_path.exists() {
-                let _ = fs::create_dir(proc_path);
-            }
-
-            mount(
-                Some("proc"),
-                "/proc",
-                Some("proc"),
-                MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC | MsFlags::MS_NODEV,
-                None::<&str>
-            ).expect("Failed to mount /proc");
-
-            let sys_path = Path::new("/sys");
-            if !sys_path.exists() {
-                let _ = fs::create_dir(sys_path);
-            }
-            mount(
-                Some("sysfs"),
-                "/sys",
-                Some("sysfs"),
-                MsFlags::MS_RDONLY | MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC | MsFlags::MS_NODEV,
-                None::<&str>
-            ).expect("Failed to mount /sys");
+            // let proc_path = Path::new("/proc");
+            // if !proc_path.exists() {
+            //     let _ = fs::create_dir(proc_path);
+            // }
+            //
+            // mount(
+            //     Some("proc"),
+            //     "/proc",
+            //     Some("proc"),
+            //     MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC | MsFlags::MS_NODEV,
+            //     None::<&str>
+            // ).expect("Failed to mount /proc");
+            //
+            // let sys_path = Path::new("/sys");
+            // if !sys_path.exists() {
+            //     let _ = fs::create_dir(sys_path);
+            // }
+            // mount(
+            //     Some("sysfs"),
+            //     "/sys",
+            //     Some("sysfs"),
+            //     MsFlags::MS_RDONLY | MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC | MsFlags::MS_NODEV,
+            //     None::<&str>
+            // ).expect("Failed to mount /sys");
 
             if let Err(e) = Command::new("/bin/sh")
                 .args(&["-c", "ip link set up dev lo || ifconfig lo up"])
@@ -186,12 +268,11 @@ fn run_container(container_id: &str) {
             let mut child_cmd = Command::new(&cmd);
             child_cmd.args(&cmd_args);
             child_cmd.current_dir(cwd);
-            // if let Some(user) = process.user().as_ref() {
-            //     println!("Container User: uid={} gid={}", user.uid, user.gid);
-            //     child_cmd.uid(user.uid);
-            //     child_cmd.gid(user.gid);
-            // }
 
+            let user = process.user();
+            println!("Child: Running as user: uid={} gid={}", user.uid(), user.gid());
+            child_cmd.uid(user.uid());
+            child_cmd.gid(user.gid());
 
             child_cmd.env_clear();
             for env_var in env_vars {
@@ -202,7 +283,9 @@ fn run_container(container_id: &str) {
                 }
             }
 
-            let _ = child_cmd.exec();
+            let err = child_cmd.exec();
+            eprintln!("Child: Command exited with error: {}", err);
+            std::process::exit(1);
         }
         Err(e) => panic!("Fork failed: {}", e),
     }
