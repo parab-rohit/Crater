@@ -9,6 +9,7 @@ use std::process::Command;
 use std::os::unix::process::CommandExt;
 use std::os::unix::io::AsRawFd;
 use std::path::Path;
+use nix::sys::signal::{self,Signal};
 use oci_spec::runtime::Spec;
 
 // Define Linux Loop Device IOCTL constants manually to avoid bindgen issues
@@ -48,6 +49,15 @@ fn main() {
             let container_id = &args[2];
             run_container(container_id);
         }
+        Some("kill") => {
+            if args.len() < 3 {
+                eprintln!("Usage: {} kill <container_id> <signal>", args.get(0).unwrap_or(&String::from("crater")));
+                std::process::exit(1);
+            }
+            let container_id = &args[2];
+            let signal = args.get(3).map(|s| s.as_str()).unwrap_or("SIGKILL");
+            kill_container(container_id, signal);
+        }
         _ => {
             eprintln!("Usage: {} run <container_id>", args.get(0).unwrap_or(&String::from("crater")));
             std::process::exit(1);
@@ -66,6 +76,36 @@ fn delete_state(container_id: &str) {
     let _ = fs::remove_dir_all(state_dir);
 }
 
+fn kill_container(container_id: &str, signal_str: &str) {
+    let state_dir = Path::new("/var/run/crater").join(container_id);
+    let pid_path = state_dir.join("pid");
+
+    if !pid_path.exists() {
+        eprintln!("Container {} not found (is it running?)", container_id);
+        std::process::exit(1);
+    }
+
+    let pid_content = fs::read_to_string(&pid_path).expect("Failed to read PID file");
+    let pid_int: i32 = pid_content.trim().parse().expect("Invalid PID in state file");
+    let pid = Pid::from_raw(pid_int);
+
+    let signal = match signal_str.to_uppercase().as_str() {
+        "SIGTERM" | "TERM" | "15" => Signal::SIGTERM,
+        "SIGKILL" | "KILL" | "9" => Signal::SIGKILL,
+        "SIGINT" | "INT" | "2" => Signal::SIGINT,
+        _ => {
+            eprintln!("Unsupported signal: {}. Defaulting to SIGTERM.", signal_str);
+            Signal::SIGTERM
+        }
+    };
+
+    if let Err(e) = signal::kill(pid, signal) {
+        eprintln!("Failed to send signal {:?} to container {}: {}", signal, container_id, e);
+        std::process::exit(1);
+    }
+    println!("Sent signal {:?} to container {}", signal, container_id);
+}
+
 // fn run_container(container_id: &str) {
 // if args.len() < 3 || args[1] != "run" {
 //         eprintln!("Usage: {} run <container_id>", args.get(0).unwrap_or(&String::from("crater")));
@@ -78,6 +118,7 @@ fn delete_state(container_id: &str) {
 
 fn run_container(container_id: &str) {
     println!("Crater Runtime Starting. Container ID: {}", container_id);
+
     let spec = match Spec::load("config.json"){
         Ok(spec) => spec,
         Err(e) => {
@@ -134,14 +175,14 @@ fn run_container(container_id: &str) {
             }
 
             println!("Parent: Waiting for container process {} to finish...", child);
-            waitpid(child, None).expect("Waitpid failed");
+            let wait_result = waitpid(child, None);
             if cgroup_path.exists() {
                 let _ = fs::remove_dir(cgroup_path);
             }
             delete_state(container_id);
             println!("Parent: Container finished. Exiting.");
 
-            match waitpid(child, None) {
+            match wait_result {
                 Ok(status) => println!("Child exited with status : {:?}", status),
                 Err(e) => println!("Error waiting for child: {}", e)
             }

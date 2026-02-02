@@ -56,13 +56,13 @@ cat <<EOF > config.json
   "ociVersion": "1.0.0",
   "hostname":"crater-oci-demo",
   "process": {
-    "terminal": true,
+    "terminal": false,
     "user": {
       "uid": 0,
       "gid": 0
     },
     "args": [
-      "/bin/sh"
+      "/bin/sh", "-c", "echo 'Container started, sleeping...'; sleep 60"
     ],
     "env": [
       "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
@@ -89,7 +89,25 @@ cat <<EOF > config.json
     ]
 }
 EOF
-./target/debug/Crater run demo-container
+./target/debug/Crater run demo-container &
+#echo "Container paused. Sleeping for 1 hour to allow log inspection..."
+#sleep 3600
+
+#echo "--- TESTING KILL COMMAND ---"
+#echo "1. Starting container in background..."
+#./target/debug/Crater run demo-container &
+#BG_PID=$!
+#
+#echo "2. Waiting 5 seconds for container to initialize..."
+#sleep 5
+#
+#echo "3. Sending SIGKILL to container..."
+#./target/debug/Crater kill demo-container SIGKILL
+#
+#echo "4. Waiting for main process to exit..."
+#wait $BG_PID || true
+#
+#echo "Test Finished."
 #
 #echo "Container paused. Sleeping for 1 hour to allow log inspection..."
 #sleep 3600
