@@ -89,7 +89,10 @@ cat <<EOF > config.json
     ]
 }
 EOF
-./target/debug/Crater run demo-container &
+./target/debug/Crater create demo-container &
+
+echo "Container created and waiting for the container start"
+./target/debug/Crater start demo-container
 #echo "Container paused. Sleeping for 1 hour to allow log inspection..."
 #sleep 3600
 
