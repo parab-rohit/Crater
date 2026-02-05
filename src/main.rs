@@ -1,7 +1,7 @@
 use std::fs::{self, File, OpenOptions};
 use std::env;
 use std::fmt::format;
-use std::io::Read;
+use std::io::{Read, Write};
 use nix::mount::{mount, umount2, MntFlags, MsFlags};
 use nix::sched::{unshare, CloneFlags};
 use nix::unistd::{chdir, pivot_root, fork, ForkResult, sethostname, Pid, pipe, mkfifo};
@@ -89,14 +89,21 @@ fn main() {
             let container_id = &args[2];
             create_container(container_id);
         }
-        Some("run") => {
+        Some("start") => {
             if args.len() < 3 {
-                eprintln!("Usage: {} run <container_id>", args.get(0).unwrap_or(&String::from("crater")));
-                std::process::exit(1);
+                eprintln!("Usage {}: cargo start <container_id>", args.get(0).unwrap_or(&String::from("crater")));
             }
-            let container_id = &args[2];
-            run_container(container_id);
+            println!("Start container {}", args[2]);
+            start_container(&args[2]);
         }
+        // Some("run") => {
+        //     if args.len() < 3 {
+        //         eprintln!("Usage: {} run <container_id>", args.get(0).unwrap_or(&String::from("crater")));
+        //         std::process::exit(1);
+        //     }
+        //     let container_id = &args[2];
+        //     run_container(container_id);
+        // }
         Some("kill") => {
             if args.len() < 3 {
                 eprintln!("Usage: {} kill <container_id> <signal>", args.get(0).unwrap_or(&String::from("crater")));
@@ -119,6 +126,26 @@ fn main() {
             std::process::exit(1);
         }
     }
+}
+
+fn start_container(container_id: &str) {
+    let state_dir = get_container_dir(container_id);
+    let fifo_path = state_dir.join("sync.fifo");
+
+    if !fifo_path.exists() {
+        eprintln!("Container {} is not in crated state or fifo is missing", container_id);
+        std::process::exit(1);
+    }
+    println!("Crater: sending start signal to container {}", container_id);
+
+    let mut fifo = OpenOptions::new()
+        .write(true)
+        .open(&fifo_path)
+        .expect("Unable to open fifo for writing");
+
+    fifo.write_all(b"GO\n").expect("Unable to write to fifo");
+    println!("Crater: sent start signal to container {}", container_id);
+
 }
 
 fn get_container_dir(id: &str) -> PathBuf {
