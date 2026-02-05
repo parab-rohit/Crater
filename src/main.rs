@@ -1,5 +1,6 @@
 use std::fs::{self, File, OpenOptions};
 use std::env;
+use std::fmt::format;
 use std::io::Read;
 use nix::mount::{mount, umount2, MntFlags, MsFlags};
 use nix::sched::{unshare, CloneFlags};
@@ -11,12 +12,50 @@ use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use nix::sys::signal::{self, Signal};
 use oci_spec::runtime::Spec;
+use serde::{Serialize, Deserialize };
+
+
 
 
 // Define Linux Loop Device IOCTL constants manually to avoid bindgen issues
 const LOOP_SET_FD: libc::c_ulong = 0x4C00;
 const LOOP_CTL_GET_FREE: libc::c_ulong = 0x4C82;
 
+#[derive(Serialize, Deserialize)]
+struct ContainerState {
+    ociVersion: String,
+    id: String,
+    state: String,
+    pid: i32,
+    bundle: String,
+}
+
+fn print_container_state(id: &str) {
+    let state_dir = get_container_dir(id);
+    let pid_path = state_dir.join("pid");
+
+    if !pid_path.exists() {
+        eprintln!("container not found");
+        std::process::exit(1);
+    }
+    let pid = fs::read_to_string(pid_path).unwrap().trim().parse::<i32>().unwrap();
+
+    let status = if Path::new(&format!("/proc/{}",pid)).exists() {
+        "running"
+    } else {
+        "stopped"
+    };
+
+    let state = ContainerState {
+        ociVersion: "1.0.2".to_string(),
+        id: id.to_string(),
+        state: status.to_string(),
+        pid,
+        bundle: format!("/run/crater/{}",id).to_string(),
+    };
+
+    println!("{}", serde_json::to_string_pretty(&state).unwrap());
+}
 fn parse_mount_opts(options: &Option<Vec<String>>) -> (MsFlags, String) {
     let mut flags= MsFlags::empty();
     let mut data = Vec::new();
@@ -66,6 +105,14 @@ fn main() {
             let container_id = &args[2];
             let signal = args.get(3).map(|s| s.as_str()).unwrap_or("SIGKILL");
             kill_container(container_id, signal);
+        }
+        Some("state") => {
+            if args.len() < 3 {
+                eprintln!("Usage: {} state <container_id>", args.get(0).unwrap_or(&String::from("crater")));
+                std::process::exit(1);
+            }
+            let container_id = &args[2];
+            print_container_state(&container_id);
         }
         _ => {
             eprintln!("Usage: {} run <container_id>", args.get(0).unwrap_or(&String::from("crater")));

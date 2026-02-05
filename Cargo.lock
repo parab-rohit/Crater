@@ -9,6 +9,7 @@ dependencies = [
  "libc",
  "nix",
  "oci-spec",
+ "serde",
  "serde_json",
 ]
 
