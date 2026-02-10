@@ -180,3 +180,34 @@ Crater can exec any command you provide. If no command is given, it defaults to 
     - Then you can run:
         docker run --rm -it --privileged crater:latest /bin/echo "hello from crater in docker"
   - Alternatively, you can override the entrypoint and reproduce the deploy steps manually before launching your command; this is more cumbersome but avoids editing the script.
+
+
+## Container lifecycle CLI
+
+Crater also provides a small runc-like lifecycle interface. The binary supports the following subcommands:
+
+- create <id> — Create a container in the "created" state using the local OCI config.json (bundle). Creates a per-container state directory and a FIFO for start synchronization.
+- start <id> — Signals the created container to start by writing to the FIFO.
+- state <id> — Prints the container runtime state in a human-friendly format.
+- kill <id> [<signal>] — Sends a signal to the container's init process (defaults to SIGKILL).
+- delete [--force] <id> — Removes the container's state and resources. If the container is running, use --force to kill and remove it.
+- list — Lists all known containers with their ID, PID, status, and bundle path.
+
+Notes:
+- Crater expects an OCI-style bundle with a config.json. The current working directory should contain config.json when you run create.
+- Container state is kept under /var/run/crater/<id>.
+- start writes a GO token to the FIFO created during create.
+
+Example: listing containers
+
+Inside the project (or in the provided Docker image) after creating and starting a demo container, you can list containers:
+
+```
+root@bec5a4d4091f:/app/target/debug# ./Crater list
+ID                   PID        STATUS          BUNDLE              
+----------------------------------------------------------------------
+demo-container       882        running         /run/crater/demo-container
+root@bec5a4d4091f:/app/target/debug# 
+```
+
+This output shows a single running container with its ID, process ID, current status, and the bundle path used to create it.
