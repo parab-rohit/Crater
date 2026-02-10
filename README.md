@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://capsule-render.vercel.app/api?type=wave&height=220&text=Crater&fontSize=80&fontAlign=50&fontAlignY=40&color=0:f97316,100:ef4444&animation=twinkling&desc=a%20tiny%20educational%20container%20runtime%20in%20Rust&descAlign=50&descAlignY=70" alt="Crater - a tiny educational container runtime in Rust">
+</p>
+
 # Crater
 
 A tiny, educational container runtime written in Rust. Crater demonstrates how to:
