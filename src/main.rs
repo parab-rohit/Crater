@@ -10,7 +10,8 @@ use std::process::Command;
 use std::os::unix::process::CommandExt;
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
-use nix::sys::signal::{self, Signal};
+use libc::system;
+use nix::sys::signal::{self, Signal, SIGKILL};
 use oci_spec::runtime::Spec;
 use serde::{Serialize, Deserialize };
 
@@ -30,7 +31,7 @@ struct ContainerState {
     bundle: String,
 }
 
-fn print_container_state(id: &str) {
+fn get_state(id: &str) -> ContainerState {
     let state_dir = get_container_dir(id);
     let pid_path = state_dir.join("pid");
 
@@ -53,7 +54,11 @@ fn print_container_state(id: &str) {
         pid,
         bundle: format!("/run/crater/{}",id).to_string(),
     };
+    state
+}
 
+fn print_container_state(id: &str) {
+    let state = get_state(id);
     println!("{}", serde_json::to_string_pretty(&state).unwrap());
 }
 fn parse_mount_opts(options: &Option<Vec<String>>) -> (MsFlags, String) {
@@ -121,11 +126,37 @@ fn main() {
             let container_id = &args[2];
             print_container_state(&container_id);
         }
+        Some("delete") => {
+            if args.len() < 3 {
+                eprintln!("Usage: {} delete <container_id>", args.get(0).unwrap_or(&String::from("crater")));
+                std::process::exit(1);
+            }
+            let container_id = &args[2];
+            let force = args.contains(&"--force".to_string());
+
+            let state = get_state(&container_id);
+            if state.state == "running" && !force {
+                eprintln!("Container {} is running. use --force option to delete the container", container_id);
+                std::process::exit(1);
+            }
+            if state.state == "running" && force {
+                kill_container(&container_id,"SIGKILL" );
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            cleanup_container_resources(&container_id);
+        }
         _ => {
             eprintln!("Usage: {} run <container_id>", args.get(0).unwrap_or(&String::from("crater")));
             std::process::exit(1);
         }
     }
+}
+fn cleanup_container_resources(id: &str) {
+    println!("Cleaning up for container {}", id);
+    let rootfs = Path::new("/app/crater_rootfs");
+    let _ = umount2(rootfs, MntFlags::MNT_DETACH);
+    delete_state(id);
+    println!("Containe {} successfully deleted", id);
 }
 
 fn start_container(container_id: &str) {
