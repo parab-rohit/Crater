@@ -14,9 +14,7 @@ use libc::system;
 use nix::sys::signal::{self, Signal, SIGKILL};
 use oci_spec::runtime::Spec;
 use serde::{Serialize, Deserialize };
-
-
-
+use log::error;
 
 // Define Linux Loop Device IOCTL constants manually to avoid bindgen issues
 const LOOP_SET_FD: libc::c_ulong = 0x4C00;
@@ -60,6 +58,50 @@ fn get_state(id: &str) -> ContainerState {
 fn print_container_state(id: &str) {
     let state = get_state(id);
     println!("{}", serde_json::to_string_pretty(&state).unwrap());
+}
+
+
+fn list_containers(){
+    let base_dir = Path::new("/var/run/crater");
+    if !base_dir.exists() {
+        println!("ID\t\tPID\t\tSTATUS\t\tBUNDLE");
+        return;
+    }
+    println!("{:<20} {:<10} {:<15} {:<20}", "ID", "PID", "STATUS", "BUNDLE");
+    println!("{}", "-".repeat(70));
+    if let Ok(entries) = fs::read_dir(base_dir) {
+        for entry in entries.flatten() {
+            let id = entry.file_name().to_string_lossy().into_owned();
+            if let Ok(state) = try_get_state(&id) {
+                println!("{:<20} {:<10} {:<15} {:<20}",
+                state.id, state.pid, state.state, state.bundle)
+            };
+        }
+    }
+}
+
+fn try_get_state(id: &str) -> Result<ContainerState,String> {
+    let state_dir = get_container_dir(id);
+    let pid_path = state_dir.join("pid");
+    if !pid_path.exists(){
+        return Err("no PID file".to_string());
+    }
+    let pid_str = fs::read_to_string(pid_path).map_err(|e| e.to_string())?;
+    let pid = pid_str.trim().parse::<i32>().map_err(|e| e.to_string())?;
+    let status = if Path::new(&format!("/proc/{}", pid)).exists() {
+        "running"
+    } else {
+        "stopped"
+    };
+    Ok(ContainerState {
+        ociVersion: "1.0.2".to_string(),
+        id: id.to_string(),
+        state: status.to_string(),
+        pid,
+        bundle: format!("/run/crater/{}",id).to_string(),
+    })
+
+
 }
 fn parse_mount_opts(options: &Option<Vec<String>>) -> (MsFlags, String) {
     let mut flags= MsFlags::empty();
@@ -144,6 +186,9 @@ fn main() {
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
             cleanup_container_resources(&container_id);
+        }
+        Some("list") => {
+            list_containers();
         }
         _ => {
             eprintln!("Usage: {} run <container_id>", args.get(0).unwrap_or(&String::from("crater")));
