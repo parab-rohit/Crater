@@ -1,20 +1,18 @@
 use std::fs::{self, File, OpenOptions};
 use std::env;
-use std::fmt::format;
 use std::io::{Read, Write};
 use nix::mount::{mount, umount2, MntFlags, MsFlags};
-use nix::sched::{unshare, CloneFlags};
+use nix::sched::{unshare, CloneFlags, setns};
 use nix::unistd::{chdir, pivot_root, fork, ForkResult, sethostname, Pid, pipe, mkfifo};
+use nix::fcntl::{open, OFlag};
 use nix::sys::stat::{mknod, Mode, SFlag, makedev};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::os::unix::process::CommandExt;
-use std::os::unix::io::AsRawFd;
+use std::os::unix::io::{ AsRawFd, BorrowedFd};
 use std::path::{Path, PathBuf};
-use libc::system;
 use nix::sys::signal::{self, Signal, SIGKILL};
 use oci_spec::runtime::Spec;
 use serde::{Serialize, Deserialize };
-use log::error;
 
 // Define Linux Loop Device IOCTL constants manually to avoid bindgen issues
 const LOOP_SET_FD: libc::c_ulong = 0x4C00;
@@ -151,6 +149,16 @@ fn main() {
         //     let container_id = &args[2];
         //     run_container(container_id);
         // }
+        Some("exec") => {
+            if args.len() < 4 {
+                eprintln!("Usage: {} exec <container_id> <command> [args...]", args.get(0).unwrap_or(&String::from("crater")));
+                std::process::exit(1);
+            }
+            let container_id = &args[2];
+            let command = &args[3];
+            let cmd_args : Vec<&str> = if args.len() > 4 { args[4..].iter().map(|s| s.as_str()).collect() } else { vec![] };
+            exec_in_container(container_id, command, cmd_args);
+        }
         Some("kill") => {
             if args.len() < 3 {
                 eprintln!("Usage: {} kill <container_id> <signal>", args.get(0).unwrap_or(&String::from("crater")));
@@ -195,6 +203,34 @@ fn main() {
             std::process::exit(1);
         }
     }
+}
+
+fn exec_in_container(container_id: &str, command: &str, cmd_args: Vec<&str>) {
+    let state_dir = get_container_dir(container_id);
+    let pid_path = state_dir.join("pid");
+
+    if !pid_path.exists() {
+        eprintln!("Container {} is not in crated state or pid file is missing", container_id);
+        std::process::exit(1);
+    }
+    let pid_str = fs::read_to_string(pid_path).expect("Failed to read pid file");
+    let target_pid = pid_str.trim().parse::<i32>().expect("Invalid PID in state file");
+    let namespaces = ["mnt","pid","net","ipc","uts"];
+
+    for ns in namespaces {
+        let ns_path = format!("/proc/{}/ns/{}", target_pid, ns);
+        let fd = open(ns_path.as_str(), OFlag::O_RDONLY, Mode::empty())
+            .expect(&format!("Failed to open {} namespace", ns));
+        let borrowed_fd = unsafe { BorrowedFd::borrow_raw(fd) };
+        setns(borrowed_fd, CloneFlags::empty()).expect(&format!("Failed to set {} namespace", ns));
+        let _ = nix::unistd::close(fd);
+    }
+    chdir("/").expect("Failed to change directory to root");
+    let mut child_cmd = Command::new(command);
+    child_cmd.args(cmd_args);
+    let err = child_cmd.exec();
+    eprintln!("Command exited with error: {}", err);
+    std::process::exit(1);
 }
 fn cleanup_container_resources(id: &str) {
     println!("Cleaning up for container {}", id);
