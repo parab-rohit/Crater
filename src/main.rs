@@ -14,6 +14,7 @@ use nix::sys::signal::{self, Signal, SIGKILL};
 use oci_spec::runtime::Spec;
 use serde::{Serialize, Deserialize };
 use caps::{CapSet, Capability, clear, CapsHashSet};
+use log::log;
 
 // Define Linux Loop Device IOCTL constants manually to avoid bindgen issues
 const LOOP_SET_FD: libc::c_ulong = 0x4C00;
@@ -33,7 +34,7 @@ fn get_state(id: &str) -> ContainerState {
     let pid_path = state_dir.join("pid");
 
     if !pid_path.exists() {
-        eprintln!("container not found");
+        println!("Container not found!!");
         std::process::exit(1);
     }
     let pid = fs::read_to_string(pid_path).unwrap().trim().parse::<i32>().unwrap();
@@ -142,14 +143,15 @@ fn main() {
             println!("Start container {}", args[2]);
             start_container(&args[2]);
         }
-        // Some("run") => {
-        //     if args.len() < 3 {
-        //         eprintln!("Usage: {} run <container_id>", args.get(0).unwrap_or(&String::from("crater")));
-        //         std::process::exit(1);
-        //     }
-        //     let container_id = &args[2];
-        //     run_container(container_id);
-        // }
+        Some("run") => {
+            if args.len() < 3 {
+                eprintln!("Usage: {} run <container_id>", args.get(0).unwrap_or(&String::from("crater")));
+                std::process::exit(1);
+            }
+            let container_id = &args[2];
+            create_container(container_id);
+            start_container(container_id);
+        }
         Some("exec") => {
             if args.len() < 4 {
                 eprintln!("Usage: {} exec <container_id> <command> [args...]", args.get(0).unwrap_or(&String::from("crater")));
