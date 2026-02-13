@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use nix::sys::signal::{self, Signal, SIGKILL};
 use oci_spec::runtime::Spec;
 use serde::{Serialize, Deserialize };
+use caps::{CapSet, Capability, clear, CapsHashSet};
 
 // Define Linux Loop Device IOCTL constants manually to avoid bindgen issues
 const LOOP_SET_FD: libc::c_ulong = 0x4C00;
@@ -394,6 +395,20 @@ fn create_container(container_id: &str) {
             //
             // nix::unistd::read(sync_read.as_raw_fd(), &mut buff).expect("Failed to read loop");
             // println!("Child: Signal received!..executing process");
+            let mut to_keep = CapsHashSet::new();
+            to_keep.insert(Capability::CAP_CHOWN);
+            to_keep.insert(Capability::CAP_NET_BIND_SERVICE);
+            to_keep.insert(Capability::CAP_SETUID);
+            to_keep.insert(Capability::CAP_SETGID);
+
+            for cap in caps::all(){
+                if !to_keep.contains(&cap) {
+                    caps::drop(None, CapSet::Bounding, cap).ok();
+                }
+            }
+
+            caps::set(None, CapSet::Effective, &to_keep).expect("Failed to set capabilities");
+            caps::set(None, CapSet::Permitted, &to_keep).expect("Failed to set capabilities");
 
             let err = child_cmd.exec();
             eprintln!("Child: Command exited with error: {}", err);
