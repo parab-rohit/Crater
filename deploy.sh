@@ -3,14 +3,11 @@ trap "echo 'Deploy script exited. Sleeping for 1 hour to allow debugging...'; sl
 
 set -e
 
-# 1. Build the Rust project
 cargo build
 
-# 2. Create a 500MB virtual disk if it doesn't exist
 dd if=/dev/zero of=/app/container_disk.img bs=1M count=500
 mkfs.ext4 /app/container_disk.img
 
-#Detach Stray loop devices from the previous runs to prevent exhaustion
 if command -v losetup > /dev/null 2>&1; then
   echo "Cleaning up stray loop devices for /app/container_disk.img..."
   losetup -j /app/container_disk.img | cut -d: -f1 | xargs -r losetup -d || true
@@ -54,15 +51,22 @@ umount /mnt/tmp_disk
 cat <<EOF > config.json
 {
   "ociVersion": "1.0.0",
-  "hostname":"crater-oci-demo",
+  "hostname": "crater-oci-demo",
   "process": {
     "terminal": false,
     "user": {
       "uid": 0,
       "gid": 0
     },
+    "capabilities": {
+      "bounding": ["CAP_CHOWN", "CAP_NET_BIND_SERVICE", "CAP_SETUID", "CAP_SETGID"],
+      "effective": ["CAP_CHOWN", "CAP_NET_BIND_SERVICE", "CAP_SETUID", "CAP_SETGID"],
+      "permitted": ["CAP_CHOWN", "CAP_NET_BIND_SERVICE", "CAP_SETUID", "CAP_SETGID"]
+    },
     "args": [
-      "/bin/sh", "-c", "echo 'Container started, sleeping...'; sleep 60"
+      "/bin/sh",
+      "-c",
+      "echo 'Container started, sleeping...'; sleep 60"
     ],
     "env": [
       "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
@@ -74,19 +78,19 @@ cat <<EOF > config.json
     "path": "/app/crater_rootfs"
   },
   "mounts": [
-      {
-        "destination": "/proc",
-        "type": "proc",
-        "source": "proc",
-        "options": ["nosuid", "noexec", "nodev"]
-      },
-      {
-        "destination": "/sys",
-        "type": "sysfs",
-        "source": "sysfs",
-        "options": ["nosuid", "noexec", "nodev", "ro"]
-      }
-    ]
+    {
+      "destination": "/proc",
+      "type": "proc",
+      "source": "proc",
+      "options": ["nosuid", "noexec", "nodev"]
+    },
+    {
+      "destination": "/sys",
+      "type": "sysfs",
+      "source": "sysfs",
+      "options": ["nosuid", "noexec", "nodev", "ro"]
+    }
+  ]
 }
 EOF
 ./target/debug/Crater create demo-container &

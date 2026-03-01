@@ -140,6 +140,13 @@ fn main() {
             if args.len() < 3 {
                 eprintln!("Usage {}: cargo start <container_id>", args.get(0).unwrap_or(&String::from("crater")));
             }
+            let container_id = &args[2];
+            let state = get_state(&container_id);
+            if state.state == "running" {
+                println!("Container {} is already running", container_id);
+                std::process::exit(0);
+            }
+
             println!("Start container {}", args[2]);
             start_container(&args[2]);
         }
@@ -149,6 +156,11 @@ fn main() {
                 std::process::exit(1);
             }
             let container_id = &args[2];
+            let state = get_state(&container_id);
+            if state.state == "running" {
+                println!("Container {} is already running", container_id);
+                std::process::exit(0);
+            }
             create_container(container_id);
             start_container(container_id);
         }
@@ -278,10 +290,12 @@ fn create_container(container_id: &str) {
     }
 
     mkfifo(&fifo_path,Mode::S_IRWXU).expect("failed to create fifo");
-    let spec = match Spec::load("config.json"){
+    let config_file = File::open("config.json").expect("Failed to open config.json");
+    let spec: Spec = match serde_json::from_reader(config_file){
         Ok(spec) => spec,
         Err(e) => {
             eprintln!("Failed to load config.json: {}", e);
+            eprintln!("Error at line {}, column {}", e.line(), e.column());
             std::process::exit(1);
         }
     };
@@ -397,11 +411,22 @@ fn create_container(container_id: &str) {
             //
             // nix::unistd::read(sync_read.as_raw_fd(), &mut buff).expect("Failed to read loop");
             // println!("Child: Signal received!..executing process");
+            // let capabilities_to_keep = process.capabilities().unwrap_or_default();
             let mut to_keep = CapsHashSet::new();
-            to_keep.insert(Capability::CAP_CHOWN);
-            to_keep.insert(Capability::CAP_NET_BIND_SERVICE);
-            to_keep.insert(Capability::CAP_SETUID);
-            to_keep.insert(Capability::CAP_SETGID);
+            if let Some(caps) = process.capabilities() {
+                if let Some(bounding) = caps.bounding() {
+                    for cap_enum in bounding {
+                        if let Ok(cap) = cap_enum.to_string().parse::<Capability>() {
+                            to_keep.insert(cap);
+                        }
+                    }
+                }
+            }
+            // to_keep.insert(Capability::CAP_CHOWN);
+            // to_keep.insert(Capability::CAP_NET_BIND_SERVICE);
+            // to_keep.insert(Capability::CAP_SETUID);
+            // to_keep.insert(Capability::CAP_SETGID);
+
 
             for cap in caps::all(){
                 if !to_keep.contains(&cap) {
